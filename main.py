@@ -52,16 +52,15 @@ class MainGUI:
         self.cur = 0
         self.bboxIdList = []
         self.bboxList = []
-        self.bboxListTop = []
-        self.bboxListBottom = []
         self.bboxId = None
+        self.zoomImgId = None
         self.hl = None
         self.vl = None
         self.filename = None
         self.objectLabelList = []
 
         # initialize mouse state
-        self.STATE = {'click': 0, 'x': 0, 'y': 0, 'edit': 0}
+        self.STATE = {'x': 0, 'y': 0}
         self.STATE_COCO = {'click': 0}
 
         # initialize annotation file
@@ -95,13 +94,22 @@ class MainGUI:
         self.mb["menu"] = self.mb.menu
         self.addCocoBtn = Button(self.ctrlPanel, text="+", command=self.add_labels_coco)
         self.addCocoBtn.pack(fill=X, side=TOP)
+        self.zoomcanvas = Canvas(self.ctrlPanel, width=100, height=100)
+        self.zoomcanvas.pack(fill=X, side=TOP)
+        # self.mb.menu.bind("<Button-1>", self.add_labels_coco)
+        # self.mb.menu.focus_set()
 
         # Image Editing Region
         self.canvas = Canvas(self.frame, width=500, height=500)
         self.canvas.grid(row=0, column=1, sticky=W + N)
         self.canvas.bind("<Button-1>", self.mouse_click)
-        self.canvas.bind("<Motion>", self.mouse_move)
+        self.canvas.bind("<Motion>", self.mouse_move, "+")
+        self.canvas.bind("<B1-Motion>", self.mouse_drag)
+        self.canvas.bind("<ButtonRelease-1>", self.mouse_release)
         self.parent.bind("Escape", self.cancel_bbox)
+        # self.parent.bind("s", self.cancel_bbox)
+        # self.parent.bind("a", self.open_previous)  # press 'a' to go backward
+        # self.parent.bind("d", self.open_next)  # press 'd' to go forward
 
         # Labels and Bounding Box Lists Panel
         self.listPanel = Frame(self.frame)
@@ -180,8 +188,8 @@ class MainGUI:
             self.annotation_file = open('annotations/' + self.anno_filename, 'a')
             for idx, item in enumerate(self.bboxList):
                 self.annotation_file.write(self.imageDir + '/' + self.imageList[self.cur] + ',' +
-                                           ','.join(map(str, self.bboxList[idx])) + ',' + str(self.objectLabelList[idx])
-                                           + '\n')
+                                      ','.join(map(str, self.bboxList[idx])) + ',' + str(self.objectLabelList[idx])
+                                      + '\n')
             self.annotation_file.close()
         else:
             self.annotation_file = open('annotations/' + self.anno_filename, 'a')
@@ -191,50 +199,20 @@ class MainGUI:
             self.annotation_file.close()
 
     def mouse_click(self, event):
-        if self.STATE['click'] == 0:
-            if (((event.x, event.y) in self.bboxListTop) or ((event.x, event.y) in self.bboxListBottom)) and \
-               self.STATE['edit'] == 0:
-                if (event.x, event.y) in self.bboxListTop:
-                    idx = self.bboxListTop.index((event.x, event.y))
-                    self.STATE['x'] = self.bboxListBottom[idx][0]
-                    self.STATE['y'] = self.bboxListBottom[idx][1]
-                else:
-                    idx = self.bboxListBottom.index((event.x, event.y))
-                    self.STATE['x'] = self.bboxListTop[idx][0]
-                    self.STATE['y'] = self.bboxListTop[idx][1]
-                self.bboxId = self.bboxIdList[idx]
-                print(self.bboxId)
-                self.STATE['edit'] = 1
-            if self.STATE['edit'] == 0:
-                self.STATE['x'], self.STATE['y'] = event.x, event.y
-            self.STATE['click'] = 1
-        else:
-            if self.STATE['edit'] == 1:
-                idx = self.bboxIdList.index(self.bboxId)
-                self.bboxList.pop(idx)
-                self.bboxListTop.pop(idx)
-                self.bboxListBottom.pop(idx)
-                self.objectListBox.delete(idx)
-                self.bboxIdList.pop(idx)
-            self.STATE['click'] = 0
-            self.STATE['edit'] = 0
-            x1, x2 = min(self.STATE['x'], event.x), max(self.STATE['x'], event.x)
-            y1, y2 = min(self.STATE['y'], event.y), max(self.STATE['y'], event.y)
-            self.bboxList.append((x1, y1, x2, y2))
-            self.bboxIdList.append(self.bboxId)
-            self.bboxListTop.append((x1, y1))
-            self.bboxListBottom.append((x2, y2))
-            self.bboxId = None
-            # print(self.bboxIdList, self.bboxList)
-            labelidx = self.labelListBox.curselection()
-            label = self.labelListBox.get(labelidx)
-            self.objectLabelList.append(str(label))
-            self.objectListBox.insert(END, '(%d, %d) -> (%d, %d)' % (x1, y1, x2, y2) + ': ' + str(label))
-            self.objectListBox.itemconfig(len(self.bboxIdList) - 1, fg=COLORS[(len(self.bboxIdList) - 1) % len(COLORS)])
-        # self.STATE['click'] = 1 - self.STATE['click']
+        self.STATE['x'], self.STATE['y'] = event.x, event.y
+
+    def mouse_drag(self, event):
+        self.mouse_move(event)
+        if self.bboxId:
+            self.canvas.delete(self.bboxId)
+        self.bboxId = self.canvas.create_rectangle(self.STATE['x'], self.STATE['y'],
+                                                   event.x, event.y,
+                                                   width=2,
+                                                   outline=COLORS[len(self.bboxList) % len(COLORS)])
 
     def mouse_move(self, event):
         self.disp.config(text='x: %d, y: %d' % (event.x, event.y))
+        self.zoom(event)
         if self.tkimg:
             if self.hl:
                 self.canvas.delete(self.hl)
@@ -242,14 +220,29 @@ class MainGUI:
             if self.vl:
                 self.canvas.delete(self.vl)
             self.vl = self.canvas.create_line(event.x, 0, event.x, self.tkimg.height(), width=2)
-        if self.STATE['click'] == 1:
-            if self.bboxId:
-                self.canvas.delete(self.bboxId)
 
-            self.bboxId = self.canvas.create_rectangle(self.STATE['x'], self.STATE['y'],
-                                                       event.x, event.y,
-                                                       width=2,
-                                                       outline=COLORS[len(self.bboxList) % len(COLORS)])
+    def mouse_release(self, event):
+        x1, x2 = min(self.STATE['x'], event.x), max(self.STATE['x'], event.x)
+        y1, y2 = min(self.STATE['y'], event.y), max(self.STATE['y'], event.y)
+        self.bboxList.append((x1, y1, x2, y2))
+        self.bboxIdList.append(self.bboxId)
+        self.bboxId = None
+        labelidx = self.labelListBox.curselection()
+        label = self.labelListBox.get(labelidx)
+        self.objectLabelList.append(str(label))
+        self.objectListBox.insert(END, '(%d, %d) -> (%d, %d)' % (x1, y1, x2, y2) + ': ' + str(label))
+        self.objectListBox.itemconfig(len(self.bboxIdList) - 1, fg=COLORS[(len(self.bboxIdList) - 1) % len(COLORS)])
+
+    def zoom(self, event):
+        if self.zoomImgId:
+            self.zoomcanvas.delete(self.zoomImgId)
+        self.zoomImg = self.img.copy()
+        self.zoomImg = self.zoomImg.crop(((event.x-25), (event.y-25), 50, 50))
+        self.tkZoomImg = ImageTk.PhotoImage(self.zoomImg)
+        self.zoomImgId = self.zoomcanvas.create_image(0, 0, image=self.tkZoomImg, anchor=NW)
+
+    def update_bbox(self, event):
+        pass
 
     def cancel_bbox(self, event):
         if self.STATE['click'] == 1:
@@ -274,8 +267,6 @@ class MainGUI:
         self.objectListBox.delete(0, len(self.bboxList))
         self.bboxIdList = []
         self.bboxList = []
-        self.bboxListTop = []
-        self.bboxListBottom = []
         self.objectLabelList = []
 
     def add_label(self):
@@ -320,17 +311,11 @@ class MainGUI:
                                                        width=2,
                                                        outline=COLORS[len(self.bboxList) % len(COLORS)])
             self.bboxList.append((b[0], b[1], b[2], b[3]))
-            self.bboxListTop.append((b[0], b[1]))
-            self.bboxListBottom.append((b[2], b[3]))
             self.bboxIdList.append(self.bboxId)
             self.bboxId = None
             self.objectLabelList.append(str(labels_to_names[label]))
             self.objectListBox.insert(END, '(%d, %d) -> (%d, %d)' % (b[0], b[1], b[2], b[3]) + ': ' + str(labels_to_names[label]))
             self.objectListBox.itemconfig(len(self.bboxIdList) - 1, fg=COLORS[(len(self.bboxIdList) - 1) % len(COLORS)])
-        print(self.bboxIdList)
-        print(self.bboxList)
-        print(self.bboxListTop)
-        print(self.bboxListBottom)
 
 
 if __name__ == '__main__':
