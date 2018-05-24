@@ -2,7 +2,7 @@ import os
 import ntpath
 from tkinter import *
 from tkinter import filedialog
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageDraw
 import random
 
 import keras
@@ -94,8 +94,10 @@ class MainGUI:
         self.mb["menu"] = self.mb.menu
         self.addCocoBtn = Button(self.ctrlPanel, text="+", command=self.add_labels_coco)
         self.addCocoBtn.pack(fill=X, side=TOP)
-        self.zoomcanvas = Canvas(self.ctrlPanel, width=100, height=100)
-        self.zoomcanvas.pack(fill=X, side=TOP)
+        self.zoomPanelLabel = Label(self.ctrlPanel, text="Zoom Panel")
+        self.zoomPanelLabel.pack(fill=X, side=TOP)
+        self.zoomcanvas = Canvas(self.ctrlPanel, width=150, height=150)
+        self.zoomcanvas.pack(fill=X, side=TOP, anchor='center')
         # self.mb.menu.bind("<Button-1>", self.add_labels_coco)
         # self.mb.menu.focus_set()
 
@@ -212,7 +214,7 @@ class MainGUI:
 
     def mouse_move(self, event):
         self.disp.config(text='x: %d, y: %d' % (event.x, event.y))
-        self.zoom(event)
+        self.zoom_view(event)
         if self.tkimg:
             if self.hl:
                 self.canvas.delete(self.hl)
@@ -233,12 +235,15 @@ class MainGUI:
         self.objectListBox.insert(END, '(%d, %d) -> (%d, %d)' % (x1, y1, x2, y2) + ': ' + str(label))
         self.objectListBox.itemconfig(len(self.bboxIdList) - 1, fg=COLORS[(len(self.bboxIdList) - 1) % len(COLORS)])
 
-    def zoom(self, event):
+    def zoom_view(self, event):
         if self.zoomImgId:
             self.zoomcanvas.delete(self.zoomImgId)
         self.zoomImg = self.img.copy()
-        self.zoomImg = self.zoomImg.crop(((event.x-25), (event.y-25), 50, 50))
-        self.tkZoomImg = ImageTk.PhotoImage(self.zoomImg)
+        draw = ImageDraw.Draw(self.zoomImg)
+        draw.point((event.x, event.y), fill=(0,0,0))
+        self.zoomImgCrop = self.zoomImg.crop(((event.x-25), (event.y-25), (event.x+25), (event.y+25)))
+        self.zoomImgCrop = self.zoomImgCrop.resize((150, 150))
+        self.tkZoomImg = ImageTk.PhotoImage(self.zoomImgCrop)
         self.zoomImgId = self.zoomcanvas.create_image(0, 0, image=self.tkZoomImg, anchor=NW)
 
     def update_bbox(self, event):
