@@ -7,8 +7,10 @@ import random
 
 import keras
 
-from keras_retinanet.models.resnet import custom_objects
-from keras_retinanet.utils.image import preprocess_image
+from keras_retinanet import models
+from keras_retinanet.utils.image import read_image_bgr, preprocess_image, resize_image
+from keras_retinanet.utils.visualization import draw_box, draw_caption
+from keras_retinanet.utils.colors import label_color
 
 # import miscellaneous modules
 import cv2
@@ -27,9 +29,9 @@ def get_session():
 
 keras.backend.tensorflow_backend.set_session(get_session())
 
-model_path = os.path.join('.', 'snapshots', 'resnet50_coco_best_v2.0.2.h5')
+model_path = os.path.join('.', 'snapshots', 'resnet50_coco_best_v2.1.0.h5')
 
-model = keras.models.load_model(model_path, custom_objects=custom_objects)
+model = models.load_model(model_path, backbone_name='resnet50')
 # print(model.summary())
 
 # load label to names mapping for visualization purposes
@@ -98,8 +100,6 @@ class MainGUI:
         self.zoomPanelLabel.pack(fill=X, side=TOP)
         self.zoomcanvas = Canvas(self.ctrlPanel, width=150, height=150)
         self.zoomcanvas.pack(fill=X, side=TOP, anchor='center')
-        # self.mb.menu.bind("<Button-1>", self.add_labels_coco)
-        # self.mb.menu.focus_set()
 
         # Image Editing Region
         self.canvas = Canvas(self.frame, width=500, height=500)
@@ -109,9 +109,6 @@ class MainGUI:
         self.canvas.bind("<B1-Motion>", self.mouse_drag)
         self.canvas.bind("<ButtonRelease-1>", self.mouse_release)
         self.parent.bind("Escape", self.cancel_bbox)
-        # self.parent.bind("s", self.cancel_bbox)
-        # self.parent.bind("a", self.open_previous)  # press 'a' to go backward
-        # self.parent.bind("d", self.open_next)  # press 'd' to go forward
 
         # Labels and Bounding Box Lists Panel
         self.listPanel = Frame(self.frame)
@@ -236,15 +233,18 @@ class MainGUI:
         self.objectListBox.itemconfig(len(self.bboxIdList) - 1, fg=COLORS[(len(self.bboxIdList) - 1) % len(COLORS)])
 
     def zoom_view(self, event):
-        if self.zoomImgId:
-            self.zoomcanvas.delete(self.zoomImgId)
-        self.zoomImg = self.img.copy()
-        draw = ImageDraw.Draw(self.zoomImg)
-        draw.point((event.x, event.y), fill=(0,0,0))
-        self.zoomImgCrop = self.zoomImg.crop(((event.x-25), (event.y-25), (event.x+25), (event.y+25)))
-        self.zoomImgCrop = self.zoomImgCrop.resize((150, 150))
-        self.tkZoomImg = ImageTk.PhotoImage(self.zoomImgCrop)
-        self.zoomImgId = self.zoomcanvas.create_image(0, 0, image=self.tkZoomImg, anchor=NW)
+        try:
+            if self.zoomImgId:
+                self.zoomcanvas.delete(self.zoomImgId)
+            self.zoomImg = self.img.copy()
+            draw = ImageDraw.Draw(self.zoomImg)
+            draw.point((event.x, event.y), fill=(0,0,0))
+            self.zoomImgCrop = self.zoomImg.crop(((event.x-25), (event.y-25), (event.x+25), (event.y+25)))
+            self.zoomImgCrop = self.zoomImgCrop.resize((150, 150))
+            self.tkZoomImg = ImageTk.PhotoImage(self.zoomImgCrop)
+            self.zoomImgId = self.zoomcanvas.create_image(0, 0, image=self.tkZoomImg, anchor=NW)
+        except:
+            pass
 
     def update_bbox(self, event):
         pass
@@ -297,10 +297,8 @@ class MainGUI:
     def automate(self):
         opencvImage = cv2.cvtColor(np.array(self.img), cv2.COLOR_RGB2BGR)
         image = preprocess_image(opencvImage)
-        _, _, boxes, nms_classification = model.predict_on_batch(np.expand_dims(image, axis=0))
-        predicted_labels = np.argmax(nms_classification[0, :, :], axis=1)
-        scores = nms_classification[0, np.arange(nms_classification.shape[1]), predicted_labels]
-        for idx, (label, score) in enumerate(zip(predicted_labels, scores)):
+        boxes, scores, labels = model.predict_on_batch(np.expand_dims(image, axis=0))
+        for idx, (box, label, score) in enumerate(zip(boxes[0], labels[0], scores[0])):
             curr_label_list = self.labelListBox.get(0, END)
             curr_label_list = list(curr_label_list)
             if score < 0.5:
@@ -309,7 +307,7 @@ class MainGUI:
             if labels_to_names[label] not in curr_label_list:
                 continue
 
-            b = boxes[0, idx, :].astype(int)
+            b = box.astype(int)
 
             self.bboxId = self.canvas.create_rectangle(b[0], b[1],
                                                        b[2], b[3],
